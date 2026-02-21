@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Antimatter Hunter - Morning City</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #000; }
+        
+        /* UI Overlay Container */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: none; }
+        
+        /* HUD Elements */
+        .hud-element { pointer-events: auto; position: absolute; }
+        
+        /* Score */
+        #score-board { top: 20px; right: 20px; background: rgba(0, 0, 0, 0.6); color: #0f0; padding: 15px; border-radius: 8px; border: 2px solid #0f0; font-size: 24px; font-weight: bold; }
+        
+        /* Map */
+        #map-container { top: 20px; left: 20px; width: 150px; height: 150px; background: rgba(0, 20, 40, 0.7); border: 2px solid #fff; border-radius: 50%; overflow: hidden; }
+        #map-canvas { width: 100%; height: 100%; }
+        #player-dot { position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; background: red; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 5px red; }
+
+        /* Controls */
+        #joystick-zone { bottom: 40px; left: 40px; width: 120px; height: 120px; background: rgba(255, 255, 255, 0.1); border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.3); }
+        #joystick-knob { width: 50px; height: 50px; background: rgba(255, 255, 255, 0.5); border-radius: 50%; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); transition: 0.1s; }
+        
+        #jump-btn { bottom: 50px; right: 40px; width: 80px; height: 80px; background: rgba(255, 165, 0, 0.6); border: 2px solid #fff; border-radius: 50%; color: white; font-weight: bold; display: flex; justify-content: center; align-items: center; user-select: none; }
+        #jump-btn:active { background: rgba(255, 165, 0, 0.9); }
+
+        /* Menus */
+        .menu-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.85); display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; pointer-events: auto; z-index: 10; }
+        .hidden { display: none !important; }
+        
+        h1 { font-size: 4rem; margin-bottom: 10px; text-shadow: 0 0 20px #00ffff; color: #fff; }
+        h2 { color: #aaa; margin-bottom: 40px; }
+        
+        .char-btn { padding: 15px 40px; margin: 10px; font-size: 1.5rem; background: #222; color: white; border: 2px solid #444; cursor: pointer; transition: 0.3s; border-radius: 5px; }
+        .char-btn:hover { background: #444; border-color: #0f0; box-shadow: 0 0 15px #0f0; }
+        
+        #start-screen { background: linear-gradient(to bottom, #001133, #000); }
+        #end-screen { background: linear-gradient(to bottom, #001133, #002200); }
+
+    </style>
+    <!-- Load Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <!-- START SCREEN -->
+    <div id="start-screen" class="menu-screen">
+        <h1>ANTIMATTER HUNTER</h1>
+        <h2>Find 5 Hidden Green Orbs in the City</h2>
+        <div>
+            <button class="char-btn" onclick="startGame('male')">Select Male (1.8m)</button>
+            <button class="char-btn" onclick="startGame('female')">Select Female (1.6m)</button>
+        </div>
+        <p style="margin-top:30px; font-size: 0.9rem; color: #888;">Controls: WASD / Arrows to Move. Mouse to Look. Space / Button to Jump.</p>
+    </div>
+
+    <!-- END SCREEN -->
+    <div id="end-screen" class="menu-screen hidden">
+        <h1>MISSION COMPLETE</h1>
+        <h2 id="end-msg">You found all antimatter!</h2>
+        <button class="char-btn" onclick="location.reload()">Play Again</button>
+    </div>
+
+    <!-- IN-GAME UI -->
+    <div id="ui-layer">
+        <div id="score-board" class="hud-element">Antimatter: <span id="score">0</span> / 5</div>
+        
+        <div id="map-container" class="hud-element">
+            <canvas id="map-canvas" width="150" height="150"></canvas>
+            <div id="player-dot"></div>
+        </div>
+
+        <div id="joystick-zone" class="hud-element">
+            <div id="joystick-knob"></div>
+        </div>
+
+        <div id="jump-btn" class="hud-element">JUMP</div>
+    </div>
+
+    <script>
+        // --- GAME VARIABLES ---
+        let scene, camera, renderer;
+        let buildings = [];
+        let antimatters = [];
+        let score = 0;
+        const totalItems = 5;
+        let isGameActive = false;
+        
+        // Movement
+        let moveForward = false;
+        let moveBackward = false;
+        let moveLeft = false;
+        let moveRight = false;
+        let canJump = false;
+        
+        let velocity = new THREE.Vector3();
+        let direction = new THREE.Vector3();
+        
+        // Joystick Logic
+        let joyX = 0;
+        let joyY = 0;
+        
+        // Config
+        const worldSize = 400;
+        const citySize = 40; // Number of buildings
+        
+        // --- INITIALIZATION ---
+        function init() {
+            // Scene Setup (Morning Sky)
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB); // Morning Blue
+            scene.fog = new THREE.Fog(0x87CEEB, 10, 150); // Distance fog
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            // Lighting (Morning Sun)
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffd700, 0.8); // Golden hour sun
+            dirLight.position.set(50, 100, 50);
+            dirLight.castShadow = true;
+            dirLight.shadow.camera.left = -100;
+            dirLight.shadow.camera.right = 100;
+            dirLight.shadow.camera.top = 100;
+            dirLight.shadow.camera.bottom = -100;
+            scene.add(dirLight);
+
+            // Ground
+            const groundGeo = new THREE.PlaneGeometry(worldSize, worldSize);
+            const groundMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.8 });
+            const ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // Controls Setup
+            setupControls();
+            createCity();
+            
+            // Game Loop
+            animate();
+        }
+
+        function createCity() {
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            
+            for (let i = 0; i < citySize; i++) {
+                // Random height and width
+                const h = Math.random() * 30 + 10;
+                const w = Math.random() * 10 + 5;
+                const d = Math.random() * 10 + 5;
+                
+                const material = new THREE.MeshPhongMaterial({ 
+                    color: Math.random() > 0.5 ? 0x556677 : 0x334455, // Modern Grey/Blue
+                    specular: 0x111111,
+                    shininess: 30
+                });
+                
+                const building = new THREE.Mesh(geometry, material);
+                
+                // Random Position (avoid center 0,0 where player starts)
+                let x = (Math.random() - 0.5) * (worldSize - 20);
+                let z = (Math.random() - 0.5) * (worldSize - 20);
+                
+                // Keep center clear
+                if(Math.abs(x) < 10 && Math.abs(z) < 10) x += 20;
+
+                building.position.set(x, h / 2, z);
+                building.scale.set(w, h, d);
+                building.castShadow = true;
+                building.receiveShadow = true;
+                
+                scene.add(building);
+                buildings.push(building);
+            }
+            
+            spawnAntimatter();
+        }
+
+        function spawnAntimatter() {
+            const sphereGeo = new THREE.SphereGeometry(1, 32, 32);
+            const sphereMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // Bright Green
+            
+            for(let i=0; i<totalItems; i++) {
+                const item = new THREE.Mesh(sphereGeo, sphereMat);
+                
+                // Random position
+                let x = (Math.random() - 0.5) * (worldSize - 30);
+                let z = (Math.random() - 0.5) * (worldSize - 30);
+                
+                // Ensure it's not inside a building (simple logic: high up or low)
+                // For this game, let's put them floating at eye level + height
+                let y = 2; 
+
+                item.position.set(x, y, z);
+                
+                // Add a glow light
+                const light = new THREE.PointLight(0x00ff00, 1, 15);
+                item.add(light);
+                
+                scene.add(item);
+                antimatters.push(item);
+            }
+        }
+
+        // --- GAME LOGIC ---
+
+        function startGame(gender) {
+            document.getElementById('start-screen').classList.add('hidden');
+            document.getElementById('ui-layer').style.display = 'block';
+            isGameActive = true;
+            
+            // Set Character Height
+            const height = (gender === 'male') ? 1.8 : 1.6;
+            camera.position.y = height;
+
+            // Lock Pointer
+            document.body.requestPointerLock();
+        }
+
+        function endGame() {
+            isGameActive = false;
+            document.exitPointerLock();
+            document.getElementById('end-screen').classList.remove('hidden');
+            document.getElementById('ui-layer').style.display = 'none';
+        }
+
+        function updateScore() {
+            score++;
+            document.getElementById('score').innerText = score;
+            
+            if(score >= totalItems) {
+                setTimeout(endGame, 1000);
+            }
+        }
+
+        function checkCollisions() {
+            // Simple distance check for items
+            for (let i = antimatters.length - 1; i >= 0; i--) {
+                const item = antimatters[i];
+                const dist = camera.position.distanceTo(item.position);
+                
+                if (dist < 3) { // Pickup range
+                    scene.remove(item);
+                    antimatters.splice(i, 1);
+                    updateScore();
+                }
+            }
+        }
+
+        function updateMap() {
+            const mapCanvas = document.getElementById('map-canvas');
+            const ctx = mapCanvas.getContext('2d');
+            const w = mapCanvas.width;
+            const h = mapCanvas.height;
+            
+            // Clear
+            ctx.fillStyle = 'rgba(0,0,0,0)';
+            ctx.clearRect(0, 0, w, h);
+            
+            // Draw Buildings dots
+            ctx.fillStyle = '#555';
+            buildings.forEach(b => {
+                // Map world coords (-200 to 200) to canvas (0 to 150)
+                const mx = (b.position.x + worldSize/2) * (w/worldSize);
+                const my = (b.position.z + worldSize/2) * (h/worldSize);
+                ctx.fillRect(mx, my, 2, 2);
+            });
+            
+            // Draw Antimatter
+            ctx.fillStyle = '#0f0';
+            antimatters.forEach(a => {
+                const mx = (a.position.x + worldSize/2) * (w/worldSize);
+                const my = (a.position.z + worldSize/2) * (h/worldSize);
+                ctx.beginPath();
+                ctx.arc(mx, my, 3, 0, Math.PI*2);
+                ctx.fill();
+            });
+
+            // Update Player Dot Position (Red)
+            const pDot = document.getElementById('player-dot');
+            const px = (camera.position.x + worldSize/2) * (w/worldSize);
+            const py = (camera.position.z + worldSize/2) * (h/worldSize);
+            
+            // Clamp to map edges
+            const clampX = Math.max(0, Math.min(w, px));
+            const clampY = Math.max(0, Math.min(h, py));
+            
+            pDot.style.left = clampX + 'px';
+            pDot.style.top = clampY + 'px';
+        }
+
+        // --- CONTROLS & PHYSICS ---
+        
+        function setupControls() {
+            // Keyboard
+            const onKeyDown = function (event) {
+                switch (event.code) {
+                    case 'ArrowUp': case 'KeyW': moveForward = true; break;
+                    case 'ArrowLeft': case 'KeyA': moveLeft = true; break;
+                    case 'ArrowDown': case 'KeyS': moveBackward = true; break;
+                    case 'ArrowRight': case 'KeyD': moveRight = true; break;
+                    case 'Space': if (canJump === true) velocity.y += 350; canJump = false; break;
+                }
+            };
+
+            const onKeyUp = function (event) {
+                switch (event.code) {
+                    case 'ArrowUp': case 'KeyW': moveForward = false; break;
+                    case 'ArrowLeft': case 'KeyA': moveLeft = false; break;
+                    case 'ArrowDown': case 'KeyS': moveBackward = false; break;
+                    case 'ArrowRight': case 'KeyD': moveRight = false; break;
+                }
+            };
+
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+
+            // Mouse Look
+            document.addEventListener('mousemove', function (event) {
+                if (isGameActive && document.pointerLockElement === document.body) {
+                    camera.rotation.y -= event.movementX * 0.002;
+                    // Simple clamp up/down
+                    // camera.rotation.x -= event.movementY * 0.002; 
+                    // (Omitting full X-rotation for simplicity in this code, keeping it flat or controlled via keyboard)
+                }
+            });
+            
+            // Click to lock
+            document.getElementById('ui-layer').addEventListener('click', function() {
+                if(isGameActive && !document.pointerLockElement) {
+                    document.body.requestPointerLock();
+                }
+            });
+
+            // Virtual Joystick Logic (Touch/Mouse drag)
+            const joyZone = document.getElementById('joystick-zone');
+            const joyKnob = document.getElementById('joystick-knob');
+            
+            const handleJoystick = (x, y) => {
+                const rect = joyZone.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                
+                let dx = x - centerX;
+                let dy = y - centerY;
+                
+                const distance = Math.sqrt(dx*dx + dy*dy);
+                const maxDist = rect.width / 2;
+                
+                if(distance > maxDist) {
+                    const ratio = maxDist / distance;
+                    dx *= ratio;
+                    dy *= ratio;
+                }
+                
+                // Update Visual
+                joyKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+                
+                // Update Logic (-1 to 1)
+                joyX = dx / maxDist;
+                joyY = dy / maxDist;
+            };
+
+            const resetJoy = () => {
+                joyKnob.style.transform = `translate(-50%, -50%)`;
+                joyX = 0;
+                joyY = 0;
+            };
+
+            joyZone.addEventListener('mousedown', (e) => handleJoystick(e.clientX, e.clientY));
+            window.addEventListener('mouseup', resetJoy);
+            window.addEventListener('mousemove', (e) => {
+                if(e.buttons === 1) handleJoystick(e.clientX, e.clientY);
+            });
+
+            // Jump Button
+            const jumpBtn = document.getElementById('jump-btn');
+            jumpBtn.addEventListener('touchstart', (e) => { e.preventDefault(); if (canJump) { velocity.y += 350; canJump = false; } });
+            jumpBtn.addEventListener('mousedown', (e) => { if (canJump) { velocity.y += 350; canJump = false; } });
+
+        }
+
+        let prevTime = performance.now();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!isGameActive) return;
+
+            const time = performance.now();
+            const delta = (time - prevTime) / 1000;
+
+            // Physics / Movement
+            velocity.x -= velocity.x * 10.0 * delta;
+            velocity.z -= velocity.z * 10.0 * delta;
+            velocity.y -= 9.8 * 100.0 * delta; // Gravity
+
+            direction.z = Number(moveForward) - Number(moveBackward) + (-joyY); // Joystick Y controls Z
+            direction.x = Number(moveRight) - Number(moveLeft) + (joyX); // Joystick X controls X
+            direction.normalize();
+
+            if (moveForward || moveBackward || Math.abs(joyY) > 0.1) velocity.z -= direction.z * 400.0 * delta;
+            if (moveLeft || moveRight || Math.abs(joyX) > 0.1) velocity.x -= direction.x * 400.0 * delta;
+
+            // Move Camera (First Person)
+            // We need to translate velocity relative to camera rotation
+            
+            // Get forward vector
+            let forward = new THREE.Vector3(0, 0, -1);
+            forward.applyQuaternion(camera.quaternion);
+            forward.y = 0; // Keep movement on floor
+            forward.normalize();
+
+            let right = new THREE.Vector3(1, 0, 0);
+            right.applyQuaternion(camera.quaternion);
+            right.y = 0;
+            right.normalize();
+
+            // Apply movement manually based on camera direction
+            const speed = 20 * delta; // Move speed
+            
+            // Forward/Back
+            if(moveForward || Math.abs(joyY) > 0.1) {
+                const dir = (moveBackward || joyY > 0) ? -1 : 1;
+                camera.position.addScaledVector(forward, speed * dir);
+            }
+            
+            // Left/Right
+            if(moveLeft || Math.abs(joyX) > 0.1) {
+                const dir = (moveRight || joyX > 0) ? 1 : -1; // Joystick X is inverted logic here slightly
+                // Actually standard stick: Right is positive X
+                // Our Input: Right Key = moveRight = true. Joystick Right = positive joyX.
+                // Let's simplify
+            }
+
+            // Simpler implementation for WASD + Joystick mix
+            // Re-calculate delta position
+            let moveX = (Number(moveRight) - Number(moveLeft) + joyX) * speed;
+            let moveZ = (Number(moveBackward) - Number(moveForward) + joyY) * speed; // Inverted Z for joystick typically
+
+            // Convert local move to world
+            const vRight = new THREE.Vector3(1,0,0).applyAxisAngle(new THREE.Vector3(0,1,0), camera.rotation.y);
+            const vForward = new THREE.Vector3(0,0,-1).applyAxisAngle(new THREE.Vector3(0,1,0), camera.rotation.y);
+
+            camera.position.addScaledVector(vRight, moveX);
+            camera.position.addScaledVector(vForward, moveZ);
+
+
+            // Vertical Movement (Jump)
+            camera.position.y += velocity.y * delta;
+
+            // Floor Collision
+            // Base height depends on character selection (approx 1.6 or 1.8)
+            // For simplicity, floor is at 0, camera is at y. 
+            // Let's just say camera.y must be > 1.6
+            if (camera.position.y < 1.6) {
+                velocity.y = 0;
+                camera.position.y = 1.6;
+                canJump = true;
+            }
+
+            // Rotate items
+            antimatters.forEach(item => {
+                item.rotation.y += 0.05;
+                item.position.y = 2 + Math.sin(time * 0.003) * 0.5; // Float
+            });
+
+            checkCollisions();
+            updateMap();
+
+            prevTime = time;
+            renderer.render(scene, camera);
+        }
+
+        // Window Resize
+        window.addEventListener('resize', function() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start
+        init();
+
+    </script>
+</body>
+</html>
